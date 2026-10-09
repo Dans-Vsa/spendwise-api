@@ -1,9 +1,19 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api import health
 from app.config import get_settings
+from app.db.init_db import init_db
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    init_db()
+    yield
 
 
 def create_app() -> FastAPI:
@@ -13,6 +23,7 @@ def create_app() -> FastAPI:
         version=__version__,
         description="REST API for tracking personal income, expenses, budgets and spending reports.",
         debug=settings.debug,
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

@@ -2,14 +2,14 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 1 of 12 — project scaffold).
+> Status: early development (milestone 2 of 12 — database layer).
 
 ## Features
 
 - [x] Project scaffold with FastAPI, typed settings and health check endpoint
 - [x] Interactive API docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
 - [x] Automated tests with pytest
-- [ ] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
+- [x] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
 - [ ] User registration and JWT authentication
 - [ ] Category management (with default categories for new users)
 - [ ] Transaction CRUD (income / expense)
@@ -28,7 +28,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 | Framework  | FastAPI                           |
 | Server     | Uvicorn                           |
 | Config     | pydantic-settings (`.env`)        |
-| Database   | SQLite + SQLAlchemy 2.0 (planned) |
+| Database   | SQLite + SQLAlchemy 2.0           |
 | Testing    | pytest + httpx `TestClient`       |
 
 ## Getting Started
@@ -45,6 +45,12 @@ source .venv/bin/activate
 
 pip install -r requirements-dev.txt
 cp .env.example .env   # optional
+```
+
+Create the database tables (also done automatically when the server starts):
+
+```bash
+python -m app.db.init_db
 ```
 
 Run the development server:
@@ -75,7 +81,20 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 
 | Method | Path              | Description          |
 |--------|-------------------|----------------------|
-| GET    | `/api/v1/health`  | Service health check |
+| GET    | `/api/v1/health`  | Service + database health check |
+
+## Data Model
+
+| Table          | Key columns                                                                 |
+|----------------|-----------------------------------------------------------------------------|
+| `users`        | `email` (unique), `full_name`, `hashed_password`, `currency`, `is_active`    |
+| `categories`   | `user_id`, `name`, `kind` (`income`/`expense`), `color`, `icon` — unique per user + name + kind |
+| `transactions` | `user_id`, `category_id` (nullable), `type`, `amount` (`NUMERIC(12,2)`, > 0), `description`, `note`, `occurred_on` |
+
+- Every table has `created_at` / `updated_at` timestamps (UTC).
+- Deleting a user cascades to their categories and transactions.
+- Deleting a category keeps its transactions (they become uncategorized).
+- Money is stored as exact decimals, never floats. SQLite foreign keys are enforced.
 
 ## Project Structure
 
@@ -85,10 +104,20 @@ spendwise-api/
 │   ├── __init__.py       # package version
 │   ├── main.py           # FastAPI app factory
 │   ├── config.py         # environment-based settings
-│   └── api/
-│       └── health.py     # health check route
+│   ├── api/
+│   │   └── health.py     # health check route
+│   ├── db/
+│   │   ├── base.py       # declarative base + timestamp mixin
+│   │   ├── session.py    # engine, session factory, get_db dependency
+│   │   └── init_db.py    # table creation (python -m app.db.init_db)
+│   └── models/
+│       ├── user.py
+│       ├── category.py
+│       └── transaction.py
 ├── tests/
-│   └── test_health.py
+│   ├── conftest.py       # isolated in-memory DB per test
+│   ├── test_health.py
+│   └── test_models.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── pytest.ini
