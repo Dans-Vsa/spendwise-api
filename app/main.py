@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import health
+from app.api import auth, health, users
 from app.config import get_settings
 from app.db.init_db import init_db
 
@@ -33,6 +33,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(auth.router, prefix="/api/v1")
+    app.include_router(users.router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     def root() -> dict[str, str]:

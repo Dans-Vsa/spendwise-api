@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 2 of 12 — database layer).
+> Status: early development (milestone 3 of 12 — user accounts and JWT authentication).
 
 ## Features
 
@@ -10,7 +10,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] Interactive API docs (Swagger UI at `/docs`, ReDoc at `/redoc`)
 - [x] Automated tests with pytest
 - [x] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
-- [ ] User registration and JWT authentication
+- [x] User registration and JWT authentication (bcrypt password hashing, `/users/me` profile)
 - [ ] Category management (with default categories for new users)
 - [ ] Transaction CRUD (income / expense)
 - [ ] Filtering, sorting and pagination of transactions
@@ -29,6 +29,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 | Server     | Uvicorn                           |
 | Config     | pydantic-settings (`.env`)        |
 | Database   | SQLite + SQLAlchemy 2.0           |
+| Auth       | OAuth2 password flow, JWT (PyJWT), bcrypt |
 | Testing    | pytest + httpx `TestClient`       |
 
 ## Getting Started
@@ -76,12 +77,35 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | `SPENDWISE_ENVIRONMENT`  | `development`               | Environment name             |
 | `SPENDWISE_DEBUG`        | `false`                     | FastAPI debug mode           |
 | `SPENDWISE_DATABASE_URL` | `sqlite:///./spendwise.db`  | SQLAlchemy database URL      |
+| `SPENDWISE_JWT_SECRET_KEY` | dev-only placeholder      | Secret used to sign JWTs — **set this in production** |
+| `SPENDWISE_ACCESS_TOKEN_EXPIRE_MINUTES` | `60`         | Access token lifetime        |
 
 ## API Endpoints
 
-| Method | Path              | Description          |
-|--------|-------------------|----------------------|
-| GET    | `/api/v1/health`  | Service + database health check |
+| Method | Path                     | Auth | Description                                   |
+|--------|--------------------------|------|-----------------------------------------------|
+| GET    | `/api/v1/health`         | —    | Service + database health check               |
+| POST   | `/api/v1/auth/register`  | —    | Create an account (JSON: `email`, `password`, `full_name`, `currency`) |
+| POST   | `/api/v1/auth/login`     | —    | OAuth2 password form (`username` = email) → JWT access token |
+| GET    | `/api/v1/users/me`       | JWT  | Current user's profile                        |
+| PATCH  | `/api/v1/users/me`       | JWT  | Update name, currency or password             |
+
+### Authentication example
+
+```bash
+# 1. Register
+curl -X POST http://127.0.0.1:8000/api/v1/auth/register   -H "Content-Type: application/json"   -d '{"email": "demo@example.com", "password": "demo-pass1", "full_name": "Demo"}'
+
+# 2. Log in (form data, OAuth2 password flow) -> {"access_token": "...", "token_type": "bearer"}
+curl -X POST http://127.0.0.1:8000/api/v1/auth/login   -d "username=demo@example.com&password=demo-pass1"
+
+# 3. Call protected endpoints with the token
+curl http://127.0.0.1:8000/api/v1/users/me -H "Authorization: Bearer <access_token>"
+```
+
+In Swagger UI (`/docs`) click **Authorize** and enter your email + password to try protected endpoints.
+
+Password rules: 8–72 bytes, must not be only letters or only digits. Emails are stored lowercase, currency as an uppercase 3-letter code.
 
 ## Data Model
 
@@ -105,7 +129,14 @@ spendwise-api/
 │   ├── main.py           # FastAPI app factory
 │   ├── config.py         # environment-based settings
 │   ├── api/
-│   │   └── health.py     # health check route
+│   │   ├── deps.py       # shared dependencies (DB session, current user)
+│   │   ├── health.py     # health check route
+│   │   ├── auth.py       # register + login
+│   │   └── users.py      # /users/me
+│   ├── core/
+│   │   └── security.py   # bcrypt hashing + JWT helpers
+│   ├── schemas/
+│   │   └── user.py       # request/response models
 │   ├── db/
 │   │   ├── base.py       # declarative base + timestamp mixin
 │   │   ├── session.py    # engine, session factory, get_db dependency
@@ -117,6 +148,7 @@ spendwise-api/
 ├── tests/
 │   ├── conftest.py       # isolated in-memory DB per test
 │   ├── test_health.py
+│   ├── test_auth.py
 │   └── test_models.py
 ├── requirements.txt
 ├── requirements-dev.txt

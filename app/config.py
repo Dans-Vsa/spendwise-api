@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./spendwise.db"
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # JWT auth. Always override the secret outside local development.
+    jwt_secret_key: str = "change-me-in-production-please-use-a-long-random-string"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
