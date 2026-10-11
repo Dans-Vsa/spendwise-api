@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import User
 from app.schemas.user import Token, UserCreate, UserRead
+from app.services.categories import seed_default_categories
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +30,7 @@ def register(payload: UserCreate, db: DbSession) -> User:
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
+    seed_default_categories(db, user)
     db.commit()
     db.refresh(user)
     return user

@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 3 of 12 — user accounts and JWT authentication).
+> Status: early development (milestone 4 of 12 — category management).
 
 ## Features
 
@@ -11,7 +11,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] Automated tests with pytest
 - [x] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
 - [x] User registration and JWT authentication (bcrypt password hashing, `/users/me` profile)
-- [ ] Category management (with default categories for new users)
+- [x] Category management (CRUD, per-user ownership, 14 default categories seeded on signup)
 - [ ] Transaction CRUD (income / expense)
 - [ ] Filtering, sorting and pagination of transactions
 - [ ] Monthly budgets per category with overspend alerts
@@ -89,6 +89,11 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | POST   | `/api/v1/auth/login`     | —    | OAuth2 password form (`username` = email) → JWT access token |
 | GET    | `/api/v1/users/me`       | JWT  | Current user's profile                        |
 | PATCH  | `/api/v1/users/me`       | JWT  | Update name, currency or password             |
+| GET    | `/api/v1/categories`     | JWT  | List your categories (optional `?kind=income\|expense`) |
+| POST   | `/api/v1/categories`     | JWT  | Create a category (`name`, `kind`, `color`, `icon`) |
+| GET    | `/api/v1/categories/{id}`| JWT  | Get one category                              |
+| PATCH  | `/api/v1/categories/{id}`| JWT  | Rename / recolor / change kind                |
+| DELETE | `/api/v1/categories/{id}`| JWT  | Delete a category (its transactions become uncategorized) |
 
 ### Authentication example
 
@@ -106,6 +111,21 @@ curl http://127.0.0.1:8000/api/v1/users/me -H "Authorization: Bearer <access_tok
 In Swagger UI (`/docs`) click **Authorize** and enter your email + password to try protected endpoints.
 
 Password rules: 8–72 bytes, must not be only letters or only digits. Emails are stored lowercase, currency as an uppercase 3-letter code.
+
+### Categories
+
+Every new account starts with 14 default categories (e.g. *Salary*, *Freelance*, *Food & Drinks*, *Transport*, *Bills & Utilities*) so the app is usable immediately.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/categories -H "Authorization: Bearer <access_token>" \n  -H "Content-Type: application/json" -d '{"name": "Coffee", "kind": "expense", "color": "#6d4c41", "icon": "cup"}'
+```
+
+Rules:
+
+- Names are trimmed and must be unique per user and kind (case-insensitive) → `409 Conflict` otherwise.
+- `color` must be a hex code like `#4caf50` (stored lowercase).
+- Other users' categories always return `404 Not Found`.
+- A category's `kind` cannot change once it has transactions (`409`).
 
 ## Data Model
 
@@ -131,12 +151,16 @@ spendwise-api/
 │   ├── api/
 │   │   ├── deps.py       # shared dependencies (DB session, current user)
 │   │   ├── health.py     # health check route
-│   │   ├── auth.py       # register + login
+│   │   ├── auth.py       # register + login (seeds default categories)
+│   │   ├── categories.py # categories CRUD
 │   │   └── users.py      # /users/me
 │   ├── core/
 │   │   └── security.py   # bcrypt hashing + JWT helpers
 │   ├── schemas/
-│   │   └── user.py       # request/response models
+│   │   ├── user.py       # user/auth request + response models
+│   │   └── category.py   # category request + response models
+│   ├── services/
+│   │   └── categories.py # default categories + seeding
 │   ├── db/
 │   │   ├── base.py       # declarative base + timestamp mixin
 │   │   ├── session.py    # engine, session factory, get_db dependency
@@ -146,9 +170,10 @@ spendwise-api/
 │       ├── category.py
 │       └── transaction.py
 ├── tests/
-│   ├── conftest.py       # isolated in-memory DB per test
+│   ├── conftest.py       # isolated in-memory DB per test + auth fixtures
 │   ├── test_health.py
 │   ├── test_auth.py
+│   ├── test_categories.py
 │   └── test_models.py
 ├── requirements.txt
 ├── requirements-dev.txt

@@ -48,3 +48,25 @@ def client(engine) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+TEST_PASSWORD = "s3cret-pass"
+
+
+@pytest.fixture
+def make_auth_headers(client):
+    """Factory: register (if needed) + log in a user and return its Authorization header."""
+
+    def _make(email: str = "alice@example.com") -> dict[str, str]:
+        client.post("/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD})
+        response = client.post(
+            "/api/v1/auth/login", data={"username": email, "password": TEST_PASSWORD}
+        )
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    return _make
+
+
+@pytest.fixture
+def auth_headers(make_auth_headers) -> dict[str, str]:
+    return make_auth_headers()
