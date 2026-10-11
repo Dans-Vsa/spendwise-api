@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 4 of 12 — category management).
+> Status: early development (milestone 4 of 7 — category management).
 
 ## Features
 
@@ -12,12 +12,10 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
 - [x] User registration and JWT authentication (bcrypt password hashing, `/users/me` profile)
 - [x] Category management (CRUD, per-user ownership, 14 default categories seeded on signup)
-- [ ] Transaction CRUD (income / expense)
-- [ ] Filtering, sorting and pagination of transactions
+- [ ] Transaction CRUD (income / expense) with filtering, sorting and pagination
 - [ ] Monthly budgets per category with overspend alerts
 - [ ] Reports: monthly summary, category breakdown, trends
-- [ ] CSV import / export
-- [ ] Recurring transactions
+- [ ] CSV import / export, demo data script
 - [ ] Docker image and GitHub Actions CI
 
 ## Tech Stack
