@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 4 of 7 — category management).
+> Status: early development (milestone 5 of 7 — transactions).
 
 ## Features
 
@@ -12,7 +12,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] SQLite database layer (SQLAlchemy 2.0) with users, categories and transactions
 - [x] User registration and JWT authentication (bcrypt password hashing, `/users/me` profile)
 - [x] Category management (CRUD, per-user ownership, 14 default categories seeded on signup)
-- [ ] Transaction CRUD (income / expense) with filtering, sorting and pagination
+- [x] Transaction CRUD (income / expense) with validation, filtering, search, sorting and pagination
 - [ ] Monthly budgets per category with overspend alerts
 - [ ] Reports: monthly summary, category breakdown, trends
 - [ ] CSV import / export, demo data script
@@ -92,6 +92,11 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | GET    | `/api/v1/categories/{id}`| JWT  | Get one category                              |
 | PATCH  | `/api/v1/categories/{id}`| JWT  | Rename / recolor / change kind                |
 | DELETE | `/api/v1/categories/{id}`| JWT  | Delete a category (its transactions become uncategorized) |
+| GET    | `/api/v1/transactions`   | JWT  | List transactions — filter, search, sort, paginate (see below) |
+| POST   | `/api/v1/transactions`   | JWT  | Record an income or expense                   |
+| GET    | `/api/v1/transactions/{id}` | JWT | Get one transaction                          |
+| PATCH  | `/api/v1/transactions/{id}` | JWT | Edit amount, date, category, description, note |
+| DELETE | `/api/v1/transactions/{id}` | JWT | Delete a transaction                         |
 
 ### Authentication example
 
@@ -125,6 +130,39 @@ Rules:
 - Other users' categories always return `404 Not Found`.
 - A category's `kind` cannot change once it has transactions (`409`).
 
+### Transactions
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/transactions -H "Authorization: Bearer <access_token>"   -H "Content-Type: application/json"   -d '{"type": "expense", "amount": "12.50", "occurred_on": "2026-10-12", "category_id": 5, "description": "Lunch"}'
+```
+
+Rules:
+
+- `amount` must be positive with at most 2 decimal places (max `9999999999.99`). Responses return it as a string (`"12.50"`) so no precision is lost to floats.
+- `occurred_on` defaults to today; `category_id` is optional (uncategorized).
+- The category must belong to you **and** match the transaction type (an expense can't go in *Salary*) → `422` otherwise. Changing `type` via `PATCH` re-checks this.
+- In `PATCH`, `null` clears optional fields (`category_id`, `note`) and is ignored for required ones.
+- Other users' transactions always return `404 Not Found`.
+
+Listing supports these query parameters (all optional, combinable):
+
+| Parameter                   | Example                     | Meaning                                         |
+|-----------------------------|-----------------------------|-------------------------------------------------|
+| `type`                      | `expense`                   | Only income or only expenses                    |
+| `category_id` / `uncategorized` | `5` / `true`            | One category, or only uncategorized rows        |
+| `date_from`, `date_to`      | `2026-10-01`, `2026-10-31`  | Inclusive date range                            |
+| `min_amount`, `max_amount`  | `10`, `100`                 | Inclusive amount range                          |
+| `q`                         | `coffee`                    | Case-insensitive search in description and note |
+| `sort`                      | `-amount`                   | `occurred_on`, `amount`, `created_at`; prefix `-` for descending (default `-occurred_on`) |
+| `limit`, `offset`           | `20`, `40`                  | Page size (1–100, default 20) and offset        |
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/transactions?type=expense&date_from=2026-10-01&date_to=2026-10-31&sort=-amount&limit=10"   -H "Authorization: Bearer <access_token>"
+# -> {"items": [...], "total": 42, "limit": 10, "offset": 0}
+```
+
+Unknown parameters and inconsistent ranges (e.g. `date_from` after `date_to`) are rejected with `422`.
+
 ## Data Model
 
 | Table          | Key columns                                                                 |
@@ -151,14 +189,18 @@ spendwise-api/
 │   │   ├── health.py     # health check route
 │   │   ├── auth.py       # register + login (seeds default categories)
 │   │   ├── categories.py # categories CRUD
+│   │   ├── transactions.py # transactions CRUD + list/filter endpoint
 │   │   └── users.py      # /users/me
 │   ├── core/
 │   │   └── security.py   # bcrypt hashing + JWT helpers
 │   ├── schemas/
 │   │   ├── user.py       # user/auth request + response models
-│   │   └── category.py   # category request + response models
+│   │   ├── category.py   # category request + response models
+│   │   ├── transaction.py # transaction models + list filters/sort options
+│   │   └── pagination.py # generic Page[T] response
 │   ├── services/
-│   │   └── categories.py # default categories + seeding
+│   │   ├── categories.py # default categories + seeding
+│   │   └── transactions.py # filter / sort / paginate query builder
 │   ├── db/
 │   │   ├── base.py       # declarative base + timestamp mixin
 │   │   ├── session.py    # engine, session factory, get_db dependency
@@ -172,6 +214,8 @@ spendwise-api/
 │   ├── test_health.py
 │   ├── test_auth.py
 │   ├── test_categories.py
+│   ├── test_transactions.py        # CRUD, validation, ownership
+│   ├── test_transaction_queries.py # filters, search, sorting, pagination
 │   └── test_models.py
 ├── requirements.txt
 ├── requirements-dev.txt
