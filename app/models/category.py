@@ -7,6 +7,7 @@ from app.db.base import Base, TimestampMixin
 from app.models.transaction import TransactionType
 
 if TYPE_CHECKING:
+    from app.models.budget import Budget
     from app.models.transaction import Transaction
     from app.models.user import User
 
@@ -26,6 +27,10 @@ class Category(TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="categories")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="category")
+    # Unlike transactions, budgets are meaningless without their category.
+    budgets: Mapped[list["Budget"]] = relationship(
+        back_populates="category", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Category id={self.id} name={self.name!r} kind={self.kind.value}>"

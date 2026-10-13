@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Category, Transaction, TransactionType, User
+from app.models import Budget, Category, Transaction, TransactionType, User
 
 
 def make_user(db, email="ana@example.com") -> User:
@@ -16,7 +16,8 @@ def make_user(db, email="ana@example.com") -> User:
 
 
 def test_tables_are_created(engine):
-    assert set(inspect(engine).get_table_names()) >= {"users", "categories", "transactions"}
+    tables = set(inspect(engine).get_table_names())
+    assert tables >= {"users", "categories", "transactions", "budgets"}
 
 
 def test_user_defaults(db):
@@ -121,3 +122,26 @@ def test_deleting_category_keeps_transactions(db):
     db.expire_all()
     tx = db.scalars(select(Transaction)).one()
     assert tx.category_id is None
+
+
+def test_budget_unique_per_category_and_month(db):
+    user = make_user(db)
+    food = Category(user=user, name="Food", kind=TransactionType.EXPENSE)
+    db.add_all([
+        Budget(user=user, category=food, month=date(2026, 10, 1), amount=Decimal("100")),
+        Budget(user=user, category=food, month=date(2026, 11, 1), amount=Decimal("100")),
+    ])
+    db.commit()
+    db.add(Budget(user=user, category=food, month=date(2026, 10, 1), amount=Decimal("50")))
+    with pytest.raises(IntegrityError):
+        db.commit()
+
+
+def test_deleting_category_deletes_budgets(db):
+    user = make_user(db)
+    food = Category(user=user, name="Food", kind=TransactionType.EXPENSE)
+    db.add(Budget(user=user, category=food, month=date(2026, 10, 1), amount=Decimal("100")))
+    db.commit()
+    db.delete(food)
+    db.commit()
+    assert db.scalars(select(Budget)).all() == []
