@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me-in-production-please-use-a-long-random-string"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+
+    # Budgets switch from "ok" to "warning" once this share of the limit is spent.
+    budget_warning_percent: float = Field(default=80.0, gt=0, le=100)
 
 
 @lru_cache
