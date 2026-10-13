@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: early development (milestone 5 of 7 — transactions).
+> Status: active development (milestone 6 of 7 — budgets and reports).
 
 ## Features
 
@@ -13,8 +13,8 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] User registration and JWT authentication (bcrypt password hashing, `/users/me` profile)
 - [x] Category management (CRUD, per-user ownership, 14 default categories seeded on signup)
 - [x] Transaction CRUD (income / expense) with validation, filtering, search, sorting and pagination
-- [ ] Monthly budgets per category with overspend alerts
-- [ ] Reports: monthly summary, category breakdown, trends
+- [x] Monthly budgets per expense category with spending progress and `ok` / `warning` / `over` status
+- [x] Reports: monthly summary, category breakdown, multi-month trend
 - [ ] CSV import / export, demo data script
 - [ ] Docker image and GitHub Actions CI
 
@@ -77,6 +77,7 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | `SPENDWISE_DATABASE_URL` | `sqlite:///./spendwise.db`  | SQLAlchemy database URL      |
 | `SPENDWISE_JWT_SECRET_KEY` | dev-only placeholder      | Secret used to sign JWTs — **set this in production** |
 | `SPENDWISE_ACCESS_TOKEN_EXPIRE_MINUTES` | `60`         | Access token lifetime        |
+| `SPENDWISE_BUDGET_WARNING_PERCENT` | `80`              | Budget status becomes `warning` at this % of the limit |
 
 ## API Endpoints
 
@@ -97,6 +98,15 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | GET    | `/api/v1/transactions/{id}` | JWT | Get one transaction                          |
 | PATCH  | `/api/v1/transactions/{id}` | JWT | Edit amount, date, category, description, note |
 | DELETE | `/api/v1/transactions/{id}` | JWT | Delete a transaction                         |
+| GET    | `/api/v1/budgets?month=YYYY-MM` | JWT | All budgets of a month with spent / remaining / status + totals |
+| POST   | `/api/v1/budgets`        | JWT  | Set a monthly limit for an expense category (`category_id`, `month`, `amount`) |
+| POST   | `/api/v1/budgets/copy`   | JWT  | Copy one month's budgets into another (`source`, `target`) |
+| GET    | `/api/v1/budgets/{id}`   | JWT  | One budget with its progress                  |
+| PATCH  | `/api/v1/budgets/{id}`   | JWT  | Change the limit (`amount`)                   |
+| DELETE | `/api/v1/budgets/{id}`   | JWT  | Delete a budget                               |
+| GET    | `/api/v1/reports/summary?month=YYYY-MM` | JWT | Income, expense, net, savings rate, daily average, top category |
+| GET    | `/api/v1/reports/categories?month=YYYY-MM&type=expense` | JWT | Totals and share per category |
+| GET    | `/api/v1/reports/trend?end=YYYY-MM&months=6` | JWT | Month-by-month income / expense / net (1–24 months) |
 
 ### Authentication example
 
@@ -163,6 +173,43 @@ curl "http://127.0.0.1:8000/api/v1/transactions?type=expense&date_from=2026-10-0
 
 Unknown parameters and inconsistent ranges (e.g. `date_from` after `date_to`) are rejected with `422`.
 
+### Budgets
+
+A budget is a spending limit for one **expense** category in one calendar month. Months are always written as `YYYY-MM` and default to the current month.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/budgets -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" -d '{"category_id": 5, "month": "2026-10", "amount": "400"}'
+# -> {"id": 1, "category_name": "Food & Drinks", "amount": "400.00", "spent": "342.50",
+#     "remaining": "57.50", "percent_used": 85.6, "status": "warning", ...}
+```
+
+- `spent` is the sum of that category's expenses within the month — always computed live, so editing a transaction updates every budget it touches.
+- `status` is `ok`, `warning` (≥ 80 % used by default, configurable) or `over` (spent more than the limit; `remaining` goes negative).
+- `GET /budgets?month=2026-10` returns every budget of the month plus `total_budgeted`, `total_spent`, `total_remaining` and the number of overspent budgets.
+- One budget per category and month (`409` otherwise). Income categories and other users' categories are rejected with `422`.
+- `POST /budgets/copy` with `{"source": "2026-10", "target": "2026-11"}` rolls a month's budgets forward, keeping any that already exist in the target month.
+- Deleting a category deletes its budgets.
+
+### Reports
+
+All reports are per user and computed on the fly from transactions.
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/reports/summary?month=2026-10" -H "Authorization: Bearer <access_token>"
+# -> {"month": "2026-10", "income": "3500.00", "expense": "550.00", "net": "2950.00",
+#     "savings_rate": 84.3, "transaction_count": 7, "daily_average_expense": "17.74",
+#     "top_expense_category": {"name": "Food & Drinks", "total": "300.00", "share": 54.5, ...}}
+```
+
+| Report       | What it returns |
+|--------------|-----------------|
+| `summary`    | Income, expense, net, savings rate (`null` without income), transaction count, average expense per day, biggest expense category |
+| `categories` | For `type=expense` (default) or `income`: total, count and percentage share per category, largest first; uncategorized rows are grouped as *Uncategorized* |
+| `trend`      | Income / expense / net for each of the last `months` months up to `end` (empty months are zero-filled), plus period totals and monthly averages |
+
+Money values are exact decimal strings; percentages are numbers rounded to one decimal.
+
 ## Data Model
 
 | Table          | Key columns                                                                 |
@@ -170,10 +217,11 @@ Unknown parameters and inconsistent ranges (e.g. `date_from` after `date_to`) ar
 | `users`        | `email` (unique), `full_name`, `hashed_password`, `currency`, `is_active`    |
 | `categories`   | `user_id`, `name`, `kind` (`income`/`expense`), `color`, `icon` — unique per user + name + kind |
 | `transactions` | `user_id`, `category_id` (nullable), `type`, `amount` (`NUMERIC(12,2)`, > 0), `description`, `note`, `occurred_on` |
+| `budgets`      | `user_id`, `category_id`, `month` (first day of the month), `amount` (> 0) — unique per user + category + month |
 
 - Every table has `created_at` / `updated_at` timestamps (UTC).
-- Deleting a user cascades to their categories and transactions.
-- Deleting a category keeps its transactions (they become uncategorized).
+- Deleting a user cascades to their categories, transactions and budgets.
+- Deleting a category keeps its transactions (they become uncategorized) but removes its budgets.
 - Money is stored as exact decimals, never floats. SQLite foreign keys are enforced.
 
 ## Project Structure
@@ -190,17 +238,25 @@ spendwise-api/
 │   │   ├── auth.py       # register + login (seeds default categories)
 │   │   ├── categories.py # categories CRUD
 │   │   ├── transactions.py # transactions CRUD + list/filter endpoint
+│   │   ├── budgets.py    # budgets CRUD, month overview, copy
+│   │   ├── reports.py    # summary, category breakdown, trend
 │   │   └── users.py      # /users/me
 │   ├── core/
-│   │   └── security.py   # bcrypt hashing + JWT helpers
+│   │   ├── security.py   # bcrypt hashing + JWT helpers
+│   │   ├── months.py     # YYYY-MM Month type + calendar helpers
+│   │   └── money.py      # decimal rounding + percentages
 │   ├── schemas/
 │   │   ├── user.py       # user/auth request + response models
 │   │   ├── category.py   # category request + response models
 │   │   ├── transaction.py # transaction models + list filters/sort options
+│   │   ├── budget.py     # budget models, progress + overview
+│   │   ├── report.py     # report response models
 │   │   └── pagination.py # generic Page[T] response
 │   ├── services/
 │   │   ├── categories.py # default categories + seeding
-│   │   └── transactions.py # filter / sort / paginate query builder
+│   │   ├── transactions.py # filter / sort / paginate query builder
+│   │   ├── budgets.py    # spending per category, status, month overview
+│   │   └── reports.py    # summary / breakdown / trend aggregations
 │   ├── db/
 │   │   ├── base.py       # declarative base + timestamp mixin
 │   │   ├── session.py    # engine, session factory, get_db dependency
@@ -208,7 +264,8 @@ spendwise-api/
 │   └── models/
 │       ├── user.py
 │       ├── category.py
-│       └── transaction.py
+│       ├── transaction.py
+│       └── budget.py
 ├── tests/
 │   ├── conftest.py       # isolated in-memory DB per test + auth fixtures
 │   ├── test_health.py
@@ -216,6 +273,9 @@ spendwise-api/
 │   ├── test_categories.py
 │   ├── test_transactions.py        # CRUD, validation, ownership
 │   ├── test_transaction_queries.py # filters, search, sorting, pagination
+│   ├── test_budgets.py   # budgets CRUD, status thresholds, overview, copy
+│   ├── test_reports.py   # summary, category breakdown, trend
+│   ├── test_months.py    # month + money helpers
 │   └── test_models.py
 ├── requirements.txt
 ├── requirements-dev.txt
