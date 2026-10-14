@@ -127,3 +127,8 @@ class TransactionFilters(TransactionQuery):
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
 
+
+class TransactionImportResult(BaseModel):
+    imported: int = Field(description="Rows imported (or that would be, in a dry run)")
+    dry_run: bool
+    created_categories: list[str] = Field(description="Categories created for unknown names")

@@ -1,21 +1,27 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 
 from app.api.categories import get_owned_category
 from app.api.deps import CurrentUser, DbSession
+from app.core.errors import ErrorResponse
 from app.models import Transaction, TransactionType, User
 from app.schemas.pagination import Page
 from app.schemas.transaction import (
     TransactionCreate,
     TransactionFilters,
+    TransactionImportResult,
+    TransactionQuery,
     TransactionRead,
     TransactionUpdate,
 )
+from app.services.csv_io import CSVFormatError, export_transactions, import_transactions
 from app.services.transactions import search_transactions
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+MAX_IMPORT_BYTES = 1024 * 1024  # 1 MiB
 
 # Required columns: an explicit null in a PATCH body means "leave unchanged".
 _REQUIRED_FIELDS = ("type", "amount", "occurred_on", "description")
@@ -59,6 +65,75 @@ def list_transactions(
 ) -> dict:
     items, total = search_transactions(db, current_user, filters)
     return {"items": items, "total": total, "limit": filters.limit, "offset": filters.offset}
+
+
+@router.get(
+    "/export",
+    summary="Download matching transactions as CSV",
+    response_class=Response,
+    responses={200: {"content": {"text/csv": {}}, "description": "CSV file"}},
+)
+def export_csv(
+    current_user: CurrentUser,
+    db: DbSession,
+    filters: Annotated[TransactionQuery, Query()],
+) -> Response:
+    """Accepts the same filters and sort as the list endpoint, without pagination."""
+    return Response(
+        content=export_transactions(db, current_user, filters),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="transactions.csv"'},
+    )
+
+
+@router.post(
+    "/import",
+    response_model=TransactionImportResult,
+    summary="Import transactions from CSV",
+    responses={
+        413: {"model": ErrorResponse, "description": "File larger than 1 MiB"},
+        422: {"model": ErrorResponse, "description": "Invalid file or rows (nothing imported)"},
+    },
+)
+def import_csv(
+    current_user: CurrentUser,
+    db: DbSession,
+    file: Annotated[
+        UploadFile,
+        File(description="CSV with columns date,type,amount[,category,description,note]"),
+    ],
+    create_categories: Annotated[
+        bool, Query(description="Create categories that don't exist yet instead of failing")
+    ] = False,
+    dry_run: Annotated[bool, Query(description="Validate only, don't save anything")] = False,
+) -> TransactionImportResult:
+    """All-or-nothing: if any row is invalid, nothing is imported and every problem is listed
+    in `error.fields` (e.g. `row 3.amount`)."""
+    # Sync route (runs in the threadpool), so read the spooled file directly.
+    content = file.file.read(MAX_IMPORT_BYTES + 1)
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE, detail="CSV file is larger than 1 MiB"
+        )
+    try:
+        result = import_transactions(
+            db, current_user, content, create_categories=create_categories, dry_run=dry_run
+        )
+    except CSVFormatError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    if result.errors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": f"Import failed: {len(result.errors)} problem(s), nothing was imported",
+                "fields": result.errors,
+            },
+        )
+    if not dry_run:
+        db.commit()
+    return TransactionImportResult(
+        imported=result.imported, dry_run=dry_run, created_categories=result.created_categories
+    )
 
 
 @router.post(
