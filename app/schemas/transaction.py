@@ -84,8 +84,8 @@ class TransactionSort(str, enum.Enum):
     FIRST_ADDED = "created_at"
 
 
-class TransactionFilters(BaseModel):
-    """Query parameters accepted by `GET /transactions`."""
+class TransactionQuery(BaseModel):
+    """Filters shared by the list and CSV export endpoints."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -100,8 +100,6 @@ class TransactionFilters(BaseModel):
         default=None, max_length=100, description="Case-insensitive search in description and note"
     )
     sort: TransactionSort = TransactionSort.NEWEST
-    limit: int = Field(default=20, ge=1, le=100)
-    offset: int = Field(default=0, ge=0)
 
     @field_validator("q")
     @classmethod
@@ -109,7 +107,7 @@ class TransactionFilters(BaseModel):
         return _blank_to_none(value)
 
     @model_validator(mode="after")
-    def check_ranges(self) -> "TransactionFilters":
+    def check_ranges(self) -> "TransactionQuery":
         if self.date_from and self.date_to and self.date_from > self.date_to:
             raise ValueError("date_from must be on or before date_to")
         if (
@@ -121,3 +119,11 @@ class TransactionFilters(BaseModel):
         if self.uncategorized and self.category_id is not None:
             raise ValueError("use either category_id or uncategorized, not both")
         return self
+
+
+class TransactionFilters(TransactionQuery):
+    """Query parameters accepted by `GET /transactions`."""
+
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
