@@ -75,7 +75,7 @@ def test_budget_needs_an_expense_category(client, auth_headers):
     salary = category_id(client, auth_headers, "Salary")
     response = create(client, auth_headers, salary)
     assert response.status_code == 422
-    assert "expense category" in response.json()["detail"]
+    assert "expense category" in response.json()["error"]["message"]
 
 
 def test_cannot_budget_other_users_category(client, auth_headers, make_auth_headers, food):
@@ -88,7 +88,7 @@ def test_one_budget_per_category_and_month(client, auth_headers, food):
     assert create(client, auth_headers, food).status_code == 201
     duplicate = create(client, auth_headers, food, amount="300")
     assert duplicate.status_code == 409
-    assert "2026-10" in duplicate.json()["detail"]
+    assert "2026-10" in duplicate.json()["error"]["message"]
     assert create(client, auth_headers, food, month="2026-11").status_code == 201
 
 

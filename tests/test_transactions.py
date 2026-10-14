@@ -66,7 +66,7 @@ def test_create_rejects_category_of_wrong_kind(client, auth_headers):
     salary = category_id(client, auth_headers, "Salary")
     response = create(client, auth_headers, type="expense", category_id=salary)
     assert response.status_code == 422
-    assert "income" in response.json()["detail"]
+    assert "income" in response.json()["error"]["message"]
 
 
 def test_create_rejects_missing_or_foreign_category(client, make_auth_headers):
