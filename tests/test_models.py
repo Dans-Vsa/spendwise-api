@@ -145,3 +145,19 @@ def test_deleting_category_deletes_budgets(db):
     db.delete(food)
     db.commit()
     assert db.scalars(select(Budget)).all() == []
+
+
+def test_timestamps_are_timezone_aware_utc(db):
+    user = make_user(db)
+    db.expire_all()  # force a reload from SQLite, which stores naive datetimes
+    reloaded = db.get(User, user.id)
+    assert reloaded.created_at.utcoffset().total_seconds() == 0
+    assert reloaded.updated_at.tzinfo is not None
+
+
+def test_api_serializes_timestamps_with_offset(client, auth_headers):
+    created = client.post(
+        "/api/v1/transactions", headers=auth_headers, json={"type": "income", "amount": "5"}
+    ).json()
+    fetched = client.get(f"/api/v1/transactions/{created['id']}", headers=auth_headers).json()
+    assert fetched["created_at"].endswith(("+00:00", "Z"))
