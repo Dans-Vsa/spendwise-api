@@ -2,7 +2,7 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: active development (milestone 6 of 7 — budgets and reports).
+> Status: **v1.0.0** — feature complete; a GitHub Actions CI workflow is the last remaining item.
 
 ## Features
 
@@ -15,8 +15,11 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] Transaction CRUD (income / expense) with validation, filtering, search, sorting and pagination
 - [x] Monthly budgets per expense category with spending progress and `ok` / `warning` / `over` status
 - [x] Reports: monthly summary, category breakdown, multi-month trend
-- [ ] CSV import / export, demo data script
-- [ ] Docker image and GitHub Actions CI
+- [x] CSV export (with the list filters) and all-or-nothing CSV import with per-row error reporting
+- [x] One consistent JSON error format for every error response
+- [x] Demo data script (`python -m app.seed`) with 6+ months of realistic history
+- [x] Docker image and docker-compose setup
+- [ ] GitHub Actions CI (tests on Python 3.11–3.13 + Docker smoke test)
 
 ## Tech Stack
 
@@ -29,6 +32,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 | Database   | SQLite + SQLAlchemy 2.0           |
 | Auth       | OAuth2 password flow, JWT (PyJWT), bcrypt |
 | Testing    | pytest + httpx `TestClient`       |
+| DevOps     | Docker, docker-compose            |
 
 ## Getting Started
 
@@ -60,11 +64,29 @@ uvicorn app.main:app --reload
 
 Then open <http://127.0.0.1:8000/docs> for the interactive API docs.
 
+Load demo data (a `demo@example.com` / `demo-pass1` account with 6 months of transactions and budgets — for local use only):
+
+```bash
+python -m app.seed               # options: --months 12, --reset, --email, --password
+```
+
 Run the tests:
 
 ```bash
 pytest
 ```
+
+### Run with Docker
+
+```bash
+docker compose up --build
+# API on http://127.0.0.1:8000, SQLite database kept in the "spendwise-data" volume
+
+# optional: load demo data into the container's database
+docker compose exec api python -m app.seed
+```
+
+Set `SPENDWISE_JWT_SECRET_KEY` in your shell or a `.env` file before running it anywhere but your own machine. The image runs as a non-root user and has a built-in health check.
 
 ## Configuration
 
@@ -78,6 +100,7 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | `SPENDWISE_JWT_SECRET_KEY` | dev-only placeholder      | Secret used to sign JWTs — **set this in production** |
 | `SPENDWISE_ACCESS_TOKEN_EXPIRE_MINUTES` | `60`         | Access token lifetime        |
 | `SPENDWISE_BUDGET_WARNING_PERCENT` | `80`              | Budget status becomes `warning` at this % of the limit |
+| `SPENDWISE_CORS_ORIGINS` | `["http://localhost:3000", "http://localhost:5173"]` | Allowed browser origins (JSON list) |
 
 ## API Endpoints
 
@@ -95,6 +118,8 @@ All settings are read from environment variables with the `SPENDWISE_` prefix (o
 | DELETE | `/api/v1/categories/{id}`| JWT  | Delete a category (its transactions become uncategorized) |
 | GET    | `/api/v1/transactions`   | JWT  | List transactions — filter, search, sort, paginate (see below) |
 | POST   | `/api/v1/transactions`   | JWT  | Record an income or expense                   |
+| GET    | `/api/v1/transactions/export` | JWT | Download matching transactions as CSV (same filters as the list) |
+| POST   | `/api/v1/transactions/import` | JWT | Upload a CSV (`?dry_run=true`, `?create_categories=true`) |
 | GET    | `/api/v1/transactions/{id}` | JWT | Get one transaction                          |
 | PATCH  | `/api/v1/transactions/{id}` | JWT | Edit amount, date, category, description, note |
 | DELETE | `/api/v1/transactions/{id}` | JWT | Delete a transaction                         |
@@ -173,6 +198,31 @@ curl "http://127.0.0.1:8000/api/v1/transactions?type=expense&date_from=2026-10-0
 
 Unknown parameters and inconsistent ranges (e.g. `date_from` after `date_to`) are rejected with `422`.
 
+### CSV export / import
+
+Export and import use the same format, so an exported file can be imported back (e.g. into another account):
+
+```csv
+date,type,amount,category,description,note
+2026-10-12,expense,12.50,Food & Drinks,Lunch,
+2026-10-25,income,3200.00,Salary,Monthly salary,
+```
+
+```bash
+# Export (accepts type, category_id, date_from, date_to, q, sort, ... — no pagination)
+curl -o october.csv "http://127.0.0.1:8000/api/v1/transactions/export?date_from=2026-10-01&date_to=2026-10-31"   -H "Authorization: Bearer <access_token>"
+
+# Validate first, then import
+curl -X POST "http://127.0.0.1:8000/api/v1/transactions/import?dry_run=true"   -H "Authorization: Bearer <access_token>" -F "file=@october.csv"
+# -> {"imported": 2, "dry_run": true, "created_categories": []}
+```
+
+- Required columns: `date`, `type`, `amount`; optional: `category`, `description`, `note`. Header names are case-insensitive, a UTF-8 BOM (Excel) is fine, blank lines are skipped.
+- Categories are matched by name (case-insensitive) and type. Unknown names are an error unless `create_categories=true`, which creates them.
+- **All or nothing:** if any row is invalid, nothing is saved and every problem is listed as `row 3.amount`, `row 7.category`, ... (row 1 is the header).
+- Limits: 1 MiB (`413`) and 5,000 rows per file.
+- Text cells starting with `=`, `+`, `-` or `@` are prefixed with `'` on export to prevent spreadsheet formula injection; the prefix is removed again on import.
+
 ### Budgets
 
 A budget is a spending limit for one **expense** category in one calendar month. Months are always written as `YYYY-MM` and default to the current month.
@@ -210,6 +260,34 @@ curl "http://127.0.0.1:8000/api/v1/reports/summary?month=2026-10" -H "Authorizat
 
 Money values are exact decimal strings; percentages are numbers rounded to one decimal.
 
+## Errors
+
+Every error — 4xx or 5xx — has the same shape:
+
+```json
+{
+  "error": {
+    "status": 422,
+    "code": "validation_error",
+    "message": "Request validation failed",
+    "fields": [
+      {"location": "body.type", "message": "Input should be 'income' or 'expense'"},
+      {"location": "body.amount", "message": "Input should be greater than 0"}
+    ]
+  }
+}
+```
+
+| `code`               | Status | When |
+|----------------------|--------|------|
+| `validation_error`   | 422    | Invalid body / query / CSV rows (details in `fields`) |
+| `unauthorized`       | 401    | Missing, invalid or expired token |
+| `forbidden`          | 403    | Inactive account |
+| `not_found`          | 404    | Unknown route or a resource you don't own |
+| `conflict`           | 409    | Duplicate email, category or budget |
+| `payload_too_large`  | 413    | CSV upload over 1 MiB |
+| `internal_error`     | 500    | Unexpected server error (details are logged, never returned) |
+
 ## Data Model
 
 | Table          | Key columns                                                                 |
@@ -219,7 +297,7 @@ Money values are exact decimal strings; percentages are numbers rounded to one d
 | `transactions` | `user_id`, `category_id` (nullable), `type`, `amount` (`NUMERIC(12,2)`, > 0), `description`, `note`, `occurred_on` |
 | `budgets`      | `user_id`, `category_id`, `month` (first day of the month), `amount` (> 0) — unique per user + category + month |
 
-- Every table has `created_at` / `updated_at` timestamps (UTC).
+- Every table has `created_at` / `updated_at` timestamps, always returned in UTC with an offset (`...+00:00`), even on SQLite.
 - Deleting a user cascades to their categories, transactions and budgets.
 - Deleting a category keeps its transactions (they become uncategorized) but removes its budgets.
 - Money is stored as exact decimals, never floats. SQLite foreign keys are enforced.
@@ -232,6 +310,7 @@ spendwise-api/
 │   ├── __init__.py       # package version
 │   ├── main.py           # FastAPI app factory
 │   ├── config.py         # environment-based settings
+│   ├── seed.py           # demo data script (python -m app.seed)
 │   ├── api/
 │   │   ├── deps.py       # shared dependencies (DB session, current user)
 │   │   ├── health.py     # health check route
@@ -242,6 +321,7 @@ spendwise-api/
 │   │   ├── reports.py    # summary, category breakdown, trend
 │   │   └── users.py      # /users/me
 │   ├── core/
+│   │   ├── errors.py     # consistent error schema + exception handlers
 │   │   ├── security.py   # bcrypt hashing + JWT helpers
 │   │   ├── months.py     # YYYY-MM Month type + calendar helpers
 │   │   └── money.py      # decimal rounding + percentages
@@ -255,10 +335,11 @@ spendwise-api/
 │   ├── services/
 │   │   ├── categories.py # default categories + seeding
 │   │   ├── transactions.py # filter / sort / paginate query builder
+│   │   ├── csv_io.py     # CSV export + validated all-or-nothing import
 │   │   ├── budgets.py    # spending per category, status, month overview
 │   │   └── reports.py    # summary / breakdown / trend aggregations
 │   ├── db/
-│   │   ├── base.py       # declarative base + timestamp mixin
+│   │   ├── base.py       # declarative base, UTC datetime type, timestamp mixin
 │   │   ├── session.py    # engine, session factory, get_db dependency
 │   │   └── init_db.py    # table creation (python -m app.db.init_db)
 │   └── models/
@@ -275,8 +356,13 @@ spendwise-api/
 │   ├── test_transaction_queries.py # filters, search, sorting, pagination
 │   ├── test_budgets.py   # budgets CRUD, status thresholds, overview, copy
 │   ├── test_reports.py   # summary, category breakdown, trend
+│   ├── test_csv.py       # CSV export, import, round trip, limits
+│   ├── test_errors.py    # error response format
+│   ├── test_seed.py      # demo data script
 │   ├── test_months.py    # month + money helpers
 │   └── test_models.py
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── pytest.ini
