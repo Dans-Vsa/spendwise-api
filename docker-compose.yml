@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    image: spendwise-api
+    ports:
+      - "8000:8000"
+    environment:
+      SPENDWISE_ENVIRONMENT: production
+      # Set a long random value in your shell or a .env file next to this compose file.
+      SPENDWISE_JWT_SECRET_KEY: ${SPENDWISE_JWT_SECRET_KEY:-change-me-local-docker-only}
+      SPENDWISE_CORS_ORIGINS: '["http://localhost:3000", "http://localhost:5173"]'
+    volumes:
+      - spendwise-data:/data
+    restart: unless-stopped
+
+volumes:
+  spendwise-data:
