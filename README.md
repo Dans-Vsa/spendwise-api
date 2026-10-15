@@ -2,7 +2,9 @@
 
 A REST API for tracking personal finances — income, expenses, categories, monthly budgets and spending reports. Built with **FastAPI** and **SQLite**, designed to be the backend for a web or mobile budgeting app.
 
-> Status: **v1.0.0** — feature complete; a GitHub Actions CI workflow is the last remaining item.
+[![CI](https://github.com/Dans-Vsa/spendwise-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Dans-Vsa/spendwise-api/actions/workflows/ci.yml)
+
+> Status: **v1.0.0** — all 7 milestones complete.
 
 ## Features
 
@@ -18,8 +20,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 - [x] CSV export (with the list filters) and all-or-nothing CSV import with per-row error reporting
 - [x] One consistent JSON error format for every error response
 - [x] Demo data script (`python -m app.seed`) with 6+ months of realistic history
-- [x] Docker image and docker-compose setup
-- [ ] GitHub Actions CI (tests on Python 3.11–3.13 + Docker smoke test)
+- [x] Docker image, docker-compose and GitHub Actions CI (tests on Python 3.11–3.13 + Docker smoke test)
 
 ## Tech Stack
 
@@ -32,7 +33,7 @@ A REST API for tracking personal finances — income, expenses, categories, mont
 | Database   | SQLite + SQLAlchemy 2.0           |
 | Auth       | OAuth2 password flow, JWT (PyJWT), bcrypt |
 | Testing    | pytest + httpx `TestClient`       |
-| DevOps     | Docker, docker-compose            |
+| DevOps     | Docker, docker-compose, GitHub Actions |
 
 ## Getting Started
 
@@ -361,6 +362,7 @@ spendwise-api/
 │   ├── test_seed.py      # demo data script
 │   ├── test_months.py    # month + money helpers
 │   └── test_models.py
+├── .github/workflows/ci.yml # tests on 3.11–3.13 + Docker build smoke test
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
